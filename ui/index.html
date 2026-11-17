@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock desk</title>
+  <meta name="description" content="Ask the stock research agent and see exactly how it reached each answer.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23172033'/%3E%3Cpath d='M6 21l6-6 5 4 9-10' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#composer-input">Skip to question box</a>
+
+  <div class="app" id="app">
+    <!-- Conversations -->
+    <aside class="sidebar" id="sidebar" aria-label="Conversations">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7"/><path d="M6 21l6-6 5 4 9-10"/></svg>
+        <span class="brand-name">Stock desk</span>
+      </div>
+      <button class="btn btn-new" id="new-chat" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>
+        New conversation
+      </button>
+      <nav class="history" aria-label="Recent conversations">
+        <ul id="history-list"></ul>
+        <p class="history-empty" id="history-empty">Your conversations are kept in this browser.</p>
+      </nav>
+      <div class="agent-card" id="agent-card">
+        <div class="agent-status" id="agent-status" role="status">
+          <span class="dot" aria-hidden="true"></span><span class="agent-status-text">Connecting to agent</span>
+        </div>
+        <dl class="agent-facts">
+          <div><dt>Model</dt><dd id="agent-model">–</dd></div>
+          <div><dt>Tools</dt><dd id="agent-tools">–</dd></div>
+        </dl>
+      </div>
+    </aside>
+
+    <!-- Thread -->
+    <main class="main" id="main">
+      <header class="topbar">
+        <button class="icon-btn only-narrow" id="toggle-sidebar" type="button" aria-label="Show conversations" aria-controls="sidebar" aria-expanded="false">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+        </button>
+        <h1 class="topbar-title" id="thread-title">New conversation</h1>
+        <button class="icon-btn only-medium" id="toggle-ops" type="button" aria-label="Show system health" aria-controls="ops" aria-expanded="false">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 11h4l2-6 4 12 2-6h4"/></svg>
+        </button>
+      </header>
+
+      <section class="thread" id="thread" aria-live="polite" aria-busy="false">
+        <div class="welcome" id="welcome">
+          <h2 class="welcome-title">What do you want to know about a company?</h2>
+          <p class="welcome-sub">The agent reads Wikipedia, pulls price history and can chart it. Every answer shows the steps it took and links to its full trace.</p>
+          <ul class="suggestions" id="suggestions"></ul>
+        </div>
+      </section>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <label class="visually-hidden" for="composer-input">Ask about a company or stock</label>
+        <textarea id="composer-input" rows="1" maxlength="4000" placeholder="Ask about a company or its stock, e.g. How has Tesla traded over the last 60 days?"></textarea>
+        <div class="composer-actions">
+          <span class="composer-hint" id="composer-hint">Enter to send, Shift+Enter for a new line</span>
+          <button class="btn btn-primary" id="send" type="submit">Ask</button>
+          <button class="btn btn-stop" id="stop" type="button" hidden>Stop</button>
+        </div>
+      </form>
+    </main>
+
+    <!-- System health -->
+    <aside class="ops" id="ops" aria-label="System health">
+      <div class="ops-head">
+        <h2>System health</h2>
+        <span class="ops-window">Last 15 min</span>
+      </div>
+      <div class="ops-error" id="ops-error" hidden></div>
+      <div class="kpis">
+        <div class="kpi"><span class="kpi-value" id="kpi-rpm">–</span><span class="kpi-label">Questions per minute</span></div>
+        <div class="kpi"><span class="kpi-value" id="kpi-err">–</span><span class="kpi-label">Failed answers</span></div>
+        <div class="kpi"><span class="kpi-value" id="kpi-p95">–</span><span class="kpi-label">Slowest 5% take</span></div>
+        <div class="kpi"><span class="kpi-value" id="kpi-tpm">–</span><span class="kpi-label">Tokens per minute</span></div>
+      </div>
+
+      <section class="ops-block">
+        <div class="ops-block-head"><h3>Token use, past hour</h3><span id="tokens-24h"></span></div>
+        <svg class="spark" id="token-spark" viewBox="0 0 280 64" preserveAspectRatio="none" role="img" aria-label="Tokens per minute over the past hour"></svg>
+      </section>
+
+      <section class="ops-block">
+        <div class="ops-block-head"><h3>Tools</h3></div>
+        <table class="tool-table">
+          <thead><tr><th scope="col">Tool</th><th scope="col">Calls/min</th><th scope="col">Failing</th><th scope="col">p95</th></tr></thead>
+          <tbody id="tool-rows"><tr><td colspan="4" class="muted">No tool calls yet</td></tr></tbody>
+        </table>
+      </section>
+
+      <section class="ops-block">
+        <div class="ops-block-head"><h3>Services</h3></div>
+        <ul class="services" id="services"></ul>
+      </section>
+
+      <section class="ops-block">
+        <div class="ops-block-head"><h3>Alerts</h3></div>
+        <ul class="alerts" id="alerts"><li class="muted">Checking…</li></ul>
+      </section>
+
+      <a class="ops-link" id="grafana-link" target="_blank" rel="noopener">Open full dashboard in Grafana</a>
+    </aside>
+  </div>
+
+  <div class="scrim" id="scrim" hidden></div>
+
+  <template id="tpl-turn">
+    <article class="turn">
+      <h3 class="question"></h3>
+      <div class="answer">
+        <div class="live-status" role="status"><span class="pulse" aria-hidden="true"></span><span class="live-text">Starting</span></div>
+        <figure class="price-figure" hidden></figure>
+        <div class="prose"></div>
+        <div class="charts"></div>
+        <div class="error-box" hidden></div>
+
+        <section class="run" aria-label="How the agent produced this answer">
+          <div class="run-head">
+            <span class="run-title">Run</span>
+            <span class="run-legend"><i class="sw sw-llm"></i>Model <i class="sw sw-tool"></i>Tools <i class="sw sw-err"></i>Failed</span>
+          </div>
+          <div class="tape" role="list"></div>
+          <div class="tape-scale"><span>0s</span><span class="tape-total"></span></div>
+          <dl class="run-facts"></dl>
+          <div class="run-tabs" role="tablist">
+            <button type="button" role="tab" class="tab" data-tab="steps" aria-selected="false">Steps</button>
+            <button type="button" role="tab" class="tab" data-tab="trace" aria-selected="false" disabled>Distributed trace</button>
+            <span class="run-actions">
+              <button type="button" class="link-btn copy-trace" disabled>Copy trace ID</button>
+              <a class="link-btn open-grafana" target="_blank" rel="noopener" hidden>Open in Grafana</a>
+            </span>
+          </div>
+          <div class="panel steps-panel" role="tabpanel" hidden><ol class="steps"></ol></div>
+          <div class="panel trace-panel" role="tabpanel" hidden></div>
+        </section>
+      </div>
+    </article>
+  </template>
+</body>
+</html>

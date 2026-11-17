@@ -1,0 +1,74 @@
+# Run: promtool test rules deploy/prometheus/tests/alerts_test.yml
+rule_files:
+  - ../rules/recording.yml
+  - ../rules/alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: tool failures fire, bad LLM input does not
+    interval: 1m
+    input_series:
+      # stock_data_tool: 6 ok + 6 system errors per minute -> 50% failure ratio
+      - series: 'mcp_server_operation_duration_seconds_count{service_name="mcp-tools",mcp_method_name="tools/call",gen_ai_tool_name="stock_data_tool"}'
+        values: '0+6x30'
+      - series: 'mcp_server_operation_duration_seconds_count{service_name="mcp-tools",mcp_method_name="tools/call",gen_ai_tool_name="stock_data_tool",error_type="ConnectionError"}'
+        values: '0+6x30'
+      # wikipedia_tool: only input errors (LLM mistakes) -> must not trip the failure alert
+      - series: 'mcp_server_operation_duration_seconds_count{service_name="mcp-tools",mcp_method_name="tools/call",gen_ai_tool_name="wikipedia_tool"}'
+        values: '0+10x30'
+      - series: 'mcp_server_operation_duration_seconds_count{service_name="mcp-tools",mcp_method_name="tools/call",gen_ai_tool_name="wikipedia_tool",error_type="tool_input_error"}'
+        values: '0+1x30'
+      - series: 'process_uptime_seconds{service_name="mcp-tools"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: McpToolHighFailureRate
+        exp_alerts:
+          - exp_labels: {severity: warning, team: ai-platform, service_name: mcp-tools, gen_ai_tool_name: stock_data_tool}
+            exp_annotations:
+              summary: "MCP tool stock_data_tool failing (50%)"
+              description: More than 5% of stock_data_tool calls failed with system errors over 5m (bad LLM input excluded).
+              dashboard: /d/agent-mcp-overview
+              runbook_url: https://github.com/your-org/stock-agent/blob/main/README.md#runbook-mcptoolhighfailurerate
+      - eval_time: 15m
+        alertname: McpServerDown
+        exp_alerts: []
+
+  - name: MCP server heartbeat missing
+    interval: 1m
+    input_series:
+      - series: 'process_uptime_seconds{service_name="mcp-tools"}'
+        values: '0+60x5 _x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: McpServerDown
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: McpServerDown
+        exp_alerts:
+          - exp_labels: {severity: critical, team: ai-platform, service_name: mcp-tools}
+            exp_annotations:
+              summary: MCP server is not reporting telemetry
+              description: No heartbeat from service mcp-tools for 3 minutes. The agent cannot use any tools.
+              dashboard: /d/agent-mcp-overview
+              runbook_url: https://github.com/your-org/stock-agent/blob/main/README.md#runbook-mcpserverdown
+
+  - name: token spike against trailing hour
+    interval: 1m
+    input_series:
+      # 100 tokens/s for 90 minutes, then 1000 tokens/s
+      - series: 'gen_ai_client_token_usage_sum{gen_ai_request_model="llama3.2:latest",gen_ai_token_type="input"}'
+        values: '0+6000x90 546000+60000x30'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: TokenUsageSpike
+        exp_alerts: []
+      - eval_time: 110m
+        alertname: TokenUsageSpike
+        exp_alerts:
+          - exp_labels: {severity: warning, team: ai-platform}
+            exp_annotations:
+              summary: "Token consumption spike: 1k tokens/s"
+              description: Token throughput is >3x the previous hour. Check for runaway agent loops, prompt injection or abusive clients.
+              dashboard: /d/agent-mcp-overview

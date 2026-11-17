@@ -1,0 +1,23 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+      - name: Dashboard is up to date
+        run: python scripts/build_dashboard.py && git diff --exit-code deploy/grafana/dashboards
+
+  observability-configs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Alert rules + promtool unit tests, Alertmanager, Collector, Compose
+        run: |
+          cp .env.example .env
+          make check-configs

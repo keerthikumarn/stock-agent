@@ -1,0 +1,167 @@
+# Thresholds are starting points: tune them after a week of baseline traffic.
+# Every alert links to the overview dashboard; runbook_url points at the README section.
+groups:
+  - name: mcp.alerts
+    rules:
+      - alert: McpServerDown
+        expr: absent_over_time(process_uptime_seconds{service_name="mcp-tools"}[2m])
+        for: 1m
+        labels: {severity: critical, team: ai-platform}
+        annotations:
+          summary: MCP server is not reporting telemetry
+          description: No heartbeat from service mcp-tools for 3 minutes. The agent cannot use any tools.
+          dashboard: /d/agent-mcp-overview
+          runbook_url: https://github.com/your-org/stock-agent/blob/main/README.md#runbook-mcpserverdown
+
+      - alert: McpToolHighFailureRate
+        expr: |
+          mcp_tool:failure_ratio:rate5m > 0.05
+          and on (service_name, gen_ai_tool_name)
+          sum by (service_name, gen_ai_tool_name) (increase(mcp_server_operation_duration_seconds_count{mcp_method_name="tools/call"}[10m])) >= 5
+        for: 5m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "MCP tool {{ $labels.gen_ai_tool_name }} failing ({{ $value | humanizePercentage }})"
+          description: More than 5% of {{ $labels.gen_ai_tool_name }} calls failed with system errors over 5m (bad LLM input excluded).
+          dashboard: /d/agent-mcp-overview
+          runbook_url: https://github.com/your-org/stock-agent/blob/main/README.md#runbook-mcptoolhighfailurerate
+
+      - alert: McpToolFailureRateCritical
+        expr: |
+          mcp_tool:failure_ratio:rate5m > 0.25
+          and on (service_name, gen_ai_tool_name)
+          sum by (service_name, gen_ai_tool_name) (increase(mcp_server_operation_duration_seconds_count{mcp_method_name="tools/call"}[10m])) >= 5
+        for: 5m
+        labels: {severity: critical, team: ai-platform}
+        annotations:
+          summary: "MCP tool {{ $labels.gen_ai_tool_name }} failing heavily ({{ $value | humanizePercentage }})"
+          description: More than 25% of {{ $labels.gen_ai_tool_name }} calls are failing.
+          dashboard: /d/agent-mcp-overview
+          runbook_url: https://github.com/your-org/stock-agent/blob/main/README.md#runbook-mcptoolhighfailurerate
+
+      - alert: McpToolInputErrorSpike
+        expr: |
+          mcp_tool:input_error_ratio:rate5m > 0.30
+          and on (service_name, gen_ai_tool_name)
+          sum by (service_name, gen_ai_tool_name) (increase(mcp_server_operation_duration_seconds_count{mcp_method_name="tools/call"}[15m])) >= 10
+        for: 15m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "LLM is sending invalid arguments to {{ $labels.gen_ai_tool_name }}"
+          description: Over 30% of calls are rejected as bad input. Usually a prompt/model regression or a tool schema change.
+          dashboard: /d/agent-mcp-overview
+
+      - alert: McpToolLatencyHigh
+        expr: mcp_tool:latency_seconds:p95_5m > 10
+        for: 10m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "MCP tool {{ $labels.gen_ai_tool_name }} p95 latency {{ $value | humanizeDuration }}"
+          description: p95 tool execution time above 10s for 10 minutes.
+          dashboard: /d/agent-mcp-overview
+
+      - alert: McpClientTransportErrors
+        expr: sum by (error_type) (mcp_client:transport_errors:rate5m) > 0.01
+        for: 5m
+        labels: {severity: critical, team: ai-platform}
+        annotations:
+          summary: "Agent cannot reach the MCP server ({{ $labels.error_type }})"
+          description: Tool calls from the agent fail before reaching the tool (connect errors, timeouts, HTTP errors).
+          dashboard: /d/agent-mcp-overview
+
+  - name: genai.alerts
+    rules:
+      - alert: TokenUsageSpike
+        # 5-minute token rate is 3x the trailing-hour rate, with an absolute floor to avoid noise.
+        expr: genai:tokens_total:rate5m > 3 * (genai:tokens_total:rate1h offset 5m) and genai:tokens_total:rate5m > 50
+        for: 10m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "Token consumption spike: {{ $value | humanize }} tokens/s"
+          description: Token throughput is >3x the previous hour. Check for runaway agent loops, prompt injection or abusive clients.
+          dashboard: /d/agent-mcp-overview
+
+      - alert: DailyTokenBudgetExceeded
+        expr: sum(increase(gen_ai_client_token_usage_sum[24h])) > 5e6
+        for: 5m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "More than 5M tokens consumed in the last 24h ({{ $value | humanize }})"
+          description: Adjust the 5e6 threshold to your budget. For hosted models also see gen_ai_client_cost_total.
+
+      - alert: LlmErrorRateHigh
+        expr: genai:llm_error_ratio:rate5m > 0.05
+        for: 5m
+        labels: {severity: critical, team: ai-platform}
+        annotations:
+          summary: "LLM {{ $labels.gen_ai_request_model }} error rate {{ $value | humanizePercentage }}"
+          description: LLM calls are failing (provider down, timeouts or model not loaded).
+          dashboard: /d/agent-mcp-overview
+
+      - alert: LlmLatencyHigh
+        expr: genai:llm_latency_seconds:p95_5m > 30
+        for: 10m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "LLM {{ $labels.gen_ai_request_model }} p95 latency {{ $value | humanizeDuration }}"
+          description: Model responses are slow; check GPU saturation / Ollama queueing.
+
+  - name: agent.alerts
+    rules:
+      - alert: AgentDown
+        expr: absent_over_time(process_uptime_seconds{service_name="stock-agent"}[2m])
+        for: 1m
+        labels: {severity: critical, team: ai-platform}
+        annotations:
+          summary: Agent API is not reporting telemetry
+          description: No heartbeat from service stock-agent for 3 minutes.
+
+      - alert: AgentErrorRateHigh
+        expr: agent:error_ratio:rate5m > 0.05 and agent:requests:rate5m > 0.01
+        for: 5m
+        labels: {severity: critical, team: ai-platform}
+        annotations:
+          summary: "Agent error rate {{ $value | humanizePercentage }}"
+          description: More than 5% of agent requests fail (timeouts, recursion limit, LLM errors).
+          dashboard: /d/agent-mcp-overview
+
+      - alert: AgentLatencyHigh
+        expr: agent:latency_seconds:p95_5m > 60
+        for: 10m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "Agent p95 latency {{ $value | humanizeDuration }}"
+
+      - alert: AgentRunawayToolLoop
+        expr: agent:tool_calls_per_request:p95_15m > 8 or sum(increase(agent_request_duration_seconds_count{error_type="recursion_limit"}[15m])) > 3
+        for: 5m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: Agent is looping on tools
+          description: Requests make an abnormal number of tool calls or hit the recursion limit. Usually a prompt or tool-output regression.
+          dashboard: /d/agent-mcp-overview
+
+      - alert: AgentTokensPerRequestHigh
+        expr: agent:tokens_per_request:p95_15m > 20000
+        for: 15m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "p95 tokens per request is {{ $value | humanize }}"
+          description: Context is growing abnormally (large tool outputs or long loops).
+
+  - name: telemetry-pipeline.alerts
+    rules:
+      - alert: OtelCollectorExportFailing
+        expr: sum by (exporter) (rate({__name__=~"otelcol_exporter_send_failed_.+_total"}[5m])) > 0
+        for: 10m
+        labels: {severity: warning, team: ai-platform}
+        annotations:
+          summary: "OTel collector failing to export via {{ $labels.exporter }}"
+          description: Telemetry is being dropped; dashboards and alerts may be blind.
+
+      - alert: OtelCollectorDown
+        expr: up{job="otel-collector"} == 0
+        for: 2m
+        labels: {severity: critical, team: ai-platform}
+        annotations:
+          summary: OTel collector is down — all application telemetry is lost

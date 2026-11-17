@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+charts/
+data/*.csv
+!data/.gitkeep
+
+# Environment variables and secrets
+.env.*
+!.env.example
+
+# Python
+*.py[cod]
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Test/cache
+.mypy_cache/
+.coverage
